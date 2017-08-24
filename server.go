@@ -9,6 +9,7 @@ import (
 
 var addr = flag.String("addr", ":9999", "The http server address")
 var templ = template.Must(template.ParseFiles("main.html"))
+var mainPageData mainPage
 
 func main() {
 	flag.Parse()
@@ -21,5 +22,14 @@ func main() {
 }
 
 func mainHandler(w http.ResponseWriter, req *http.Request) {
-	templ.Execute(w, nil)
+	templ.Execute(w, mainPageData)
+}
+
+func init() {
+	mainPageData = mainPage{"GoLang server – A general purpose backend server", "Hello from Golang server"}
+}
+
+type mainPage struct {
+	Title       string
+	MainMessage string
 }
