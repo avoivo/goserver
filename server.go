@@ -2,12 +2,13 @@ package main
 
 import (
 	"flag"
-	"fmt"
+	"html/template"
 	"log"
 	"net/http"
 )
 
 var addr = flag.String("addr", ":9999", "The http server address")
+var templ = template.Must(template.New("main").Parse(htmlTemplate))
 
 func main() {
 	flag.Parse()
@@ -20,5 +21,18 @@ func main() {
 }
 
 func mainHandler(w http.ResponseWriter, req *http.Request) {
-	fmt.Fprintf(w, "hello there")
+	templ.Execute(w, nil)
 }
+
+const htmlTemplate = `
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="utf-8">
+	<title>GoLang server – A general purpose backend server</title>
+</head>
+
+<body>
+	<h1>Hello from Golang server</h1>
+</body>
+</html>`
