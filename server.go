@@ -53,6 +53,7 @@ func main() {
 	http.Handle("/", http.HandlerFunc(mainHandler))
 	http.Handle("/signin", http.HandlerFunc(signInHandler))
 	http.Handle("/idtoken", http.HandlerFunc(idTokenHandler))
+	http.Handle("/resource", authorizationMiddleware(http.HandlerFunc(resourceHandler)))
 
 	err := http.ListenAndServe(*addr, nil)
 	if err != nil {
@@ -62,7 +63,7 @@ func main() {
 }
 
 func mainHandler(w http.ResponseWriter, req *http.Request) {
-	if req.Method != "GET" {
+	if req.Method != http.MethodGet {
 		http.Error(w, "Invalid request method", http.StatusMethodNotAllowed)
 		return
 	}
@@ -70,7 +71,7 @@ func mainHandler(w http.ResponseWriter, req *http.Request) {
 }
 
 func signInHandler(w http.ResponseWriter, req *http.Request) {
-	if req.Method != "GET" {
+	if req.Method != http.MethodGet {
 		http.Error(w, "Invalid request method", http.StatusMethodNotAllowed)
 		return
 	}
@@ -79,7 +80,7 @@ func signInHandler(w http.ResponseWriter, req *http.Request) {
 
 // validates the idToken in the request body and if it is valid it responds with an access token
 func idTokenHandler(w http.ResponseWriter, req *http.Request) {
-	if req.Method != "POST" {
+	if req.Method != http.MethodPost {
 		http.Error(w, "Invalid request method", http.StatusMethodNotAllowed)
 		return
 	}
@@ -118,6 +119,25 @@ func idTokenHandler(w http.ResponseWriter, req *http.Request) {
 	}
 
 	fmt.Fprintf(w, "%v", accessJWT)
+}
+
+// example of a protected resource
+func resourceHandler(w http.ResponseWriter, req *http.Request) {
+	if req.Method != http.MethodGet {
+		http.Error(w, "Invalid request method", http.StatusMethodNotAllowed)
+		return
+	}
+
+	resource := resource{"hello from resource"}
+
+	js, err := json.Marshal(resource)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.Write(js)
 }
 
 func validateGoogleIDToken(token string) (valid bool, err error) {
@@ -166,6 +186,65 @@ func generateAccessToken() (tokenString string, err error) {
 	return
 }
 
+func authorizationMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		authorizationHeader := r.Header.Get("Authorization")
+
+		if len(authorizationHeader) == 0 {
+			http.Error(w, "Unauthorized", http.StatusForbidden)
+			return
+		}
+
+		splitedAuthHead := strings.Split(authorizationHeader, " ")
+
+		if len(splitedAuthHead) != 2 || splitedAuthHead[0] != "Bearer" {
+			http.Error(w, "Unauthorized", http.StatusForbidden)
+			return
+		}
+
+		tokenString := splitedAuthHead[1]
+
+		token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
+			// Don't forget to validate the alg is what you expect:
+			if _, ok := token.Method.(*jwt.SigningMethodRSA); !ok {
+				return nil, fmt.Errorf("Unexpected signing method: %v", token.Header["alg"])
+			}
+
+			return verifyKey, nil
+		})
+
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusForbidden)
+			return
+		}
+
+		if !token.Valid {
+			http.Error(w, "invalid token", http.StatusForbidden)
+			return
+		}
+
+		claims, ok := token.Claims.(jwt.MapClaims)
+
+		if !ok {
+			http.Error(w, "cannot parse claims", http.StatusInternalServerError)
+			return
+		}
+
+		if claims["aud"] != accessTokenAudience {
+			http.Error(w, "Invalid audience", http.StatusForbidden)
+			return
+		}
+
+		if claims["iss"] != accessTokenIssuer {
+			http.Error(w, "Invalid issuer", http.StatusForbidden)
+			return
+		}
+
+		next.ServeHTTP(w, r)
+
+	})
+}
+
 func init() {
 	googleSignInClientID = os.Getenv("GOOGLE_SIGN_IN_CLIENT_ID")
 	if len(googleSignInClientID) == 0 {
@@ -209,4 +288,8 @@ type mainPage struct {
 type signInPage struct {
 	commonPage
 	GoogleSignInClientID string
+}
+
+type resource struct {
+	Message string
 }
