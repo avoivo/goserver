@@ -1,6 +1,7 @@
 package main
 
 import (
+	"crypto/rsa"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -11,6 +12,31 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"time"
+
+	"github.com/dgrijalva/jwt-go"
+)
+
+const (
+	accessTokenIssuer   = "avoivo/goserver"
+	accessTokenAudience = "go-server-web-client"
+)
+
+// location of the files used for signing and verification
+// ssh-keygen -t rsa -b 4096 -f access-token.rsa
+// openssl rsa -in access-token.rsa -pubout -outform PEM -out access-token.rsa.pub
+// -or-
+// openssl genrsa -out access-token.rsa keysize
+// openssl rsa -in access-token.rsa -pubout > access-token.rsa.pub
+
+const (
+	privKeyPath = "keys/access-token.rsa"
+	pubKeyPath  = "keys/access-token.rsa.pub"
+)
+
+var (
+	verifyKey *rsa.PublicKey
+	signKey   *rsa.PrivateKey
 )
 
 var addr = flag.String("addr", ":9999", "The http server address")
@@ -51,6 +77,7 @@ func signInHandler(w http.ResponseWriter, req *http.Request) {
 	signInTempl.Execute(w, signInPageData)
 }
 
+// validates the idToken in the request body and if it is valid it responds with an access token
 func idTokenHandler(w http.ResponseWriter, req *http.Request) {
 	if req.Method != "POST" {
 		http.Error(w, "Invalid request method", http.StatusMethodNotAllowed)
@@ -84,8 +111,13 @@ func idTokenHandler(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	log.Println("id token called")
-	fmt.Fprintf(w, "this seems to work")
+	accessJWT, err := generateAccessToken()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	fmt.Fprintf(w, "%v", accessJWT)
 }
 
 func validateGoogleIDToken(token string) (valid bool, err error) {
@@ -122,6 +154,18 @@ func validateGoogleIDToken(token string) (valid bool, err error) {
 	return
 }
 
+func generateAccessToken() (tokenString string, err error) {
+	token := jwt.NewWithClaims(jwt.SigningMethodRS256, jwt.MapClaims{
+		"iss": accessTokenIssuer,
+		"aud": accessTokenAudience,
+		"exp": time.Now().Add(time.Minute * 5).Unix(),
+	})
+
+	tokenString, err = token.SignedString(signKey)
+
+	return
+}
+
 func init() {
 	googleSignInClientID = os.Getenv("GOOGLE_SIGN_IN_CLIENT_ID")
 	if len(googleSignInClientID) == 0 {
@@ -130,6 +174,27 @@ func init() {
 
 	mainPageData = mainPage{commonPage: commonPage{"GoLang server – A general purpose backend server", "Hello from Golang server"}}
 	signInPageData = signInPage{commonPage: commonPage{"Sign in", "Please login using the following providers"}, GoogleSignInClientID: googleSignInClientID}
+
+	signBytes, err := ioutil.ReadFile(privKeyPath)
+	if err != nil {
+		panic(err)
+	}
+
+	signKey, err = jwt.ParseRSAPrivateKeyFromPEM(signBytes)
+	if err != nil {
+		panic(err)
+	}
+
+	verifyBytes, err := ioutil.ReadFile(pubKeyPath)
+	if err != nil {
+		panic(err)
+	}
+
+	verifyKey, err = jwt.ParseRSAPublicKeyFromPEM(verifyBytes)
+
+	if err != nil {
+		panic(err)
+	}
 }
 
 type commonPage struct {
