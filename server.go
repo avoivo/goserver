@@ -22,17 +22,12 @@ const (
 	accessTokenAudience = "go-server-web-client"
 )
 
-// location of the files used for signing and verification
+// generate keys with the following
 // ssh-keygen -t rsa -b 4096 -f access-token.rsa
 // openssl rsa -in access-token.rsa -pubout -outform PEM -out access-token.rsa.pub
 // -or-
 // openssl genrsa -out access-token.rsa keysize
 // openssl rsa -in access-token.rsa -pubout > access-token.rsa.pub
-
-const (
-	privKeyPath = "keys/access-token.rsa"
-	pubKeyPath  = "keys/access-token.rsa.pub"
-)
 
 var (
 	verifyKey *rsa.PublicKey
@@ -251,23 +246,29 @@ func init() {
 		panic("GOOGLE_SIGN_IN_CLIENT_ID env variable is empty")
 	}
 
+	accessTokenPrivateKey := os.Getenv("ACCESS_TOKEN_PRIVATE_KEY")
+	if len(accessTokenPrivateKey) == 0 {
+		panic("ACCESS_TOKEN_PRIVATE_KEY env variable is empty")
+	}
+
+	accessTokenPublicKey := os.Getenv("ACCESS_TOKEN_PUBLIC_KEY")
+	if len(accessTokenPublicKey) == 0 {
+		panic("ACCESS_TOKEN_PUBLIC_KEY env variable is empty")
+	}
+
 	mainPageData = mainPage{commonPage: commonPage{"GoLang server – A general purpose backend server", "Hello from Golang server"}}
 	signInPageData = signInPage{commonPage: commonPage{"Sign in", "Please login using the following providers"}, GoogleSignInClientID: googleSignInClientID}
 
-	signBytes, err := ioutil.ReadFile(privKeyPath)
-	if err != nil {
-		panic(err)
-	}
+	signBytes := []byte(accessTokenPrivateKey)
+
+	var err error
 
 	signKey, err = jwt.ParseRSAPrivateKeyFromPEM(signBytes)
 	if err != nil {
 		panic(err)
 	}
 
-	verifyBytes, err := ioutil.ReadFile(pubKeyPath)
-	if err != nil {
-		panic(err)
-	}
+	verifyBytes := []byte(accessTokenPublicKey)
 
 	verifyKey, err = jwt.ParseRSAPublicKeyFromPEM(verifyBytes)
 
