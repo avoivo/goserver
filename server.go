@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/dgrijalva/jwt-go"
+	"github.com/gorilla/mux"
 )
 
 const (
@@ -45,12 +46,14 @@ var googleSignInClientID string
 func main() {
 
 	flag.Parse()
-	http.Handle("/", http.HandlerFunc(mainHandler))
-	http.Handle("/signin", http.HandlerFunc(signInHandler))
-	http.Handle("/idtoken", http.HandlerFunc(idTokenHandler))
-	http.Handle("/resource", authorizationMiddleware(http.HandlerFunc(resourceHandler)))
 
-	err := http.ListenAndServe(*addr, nil)
+	r := mux.NewRouter()
+	r.HandleFunc("/", mainHandler).Methods("GET")
+	r.HandleFunc("/signin", signInHandler).Methods("GET")
+	r.HandleFunc("/idtoken", idTokenHandler).Methods("POST")
+	r.HandleFunc("/resource", authorizationMiddleware(resourceHandler)).Methods("GET")
+
+	err := http.ListenAndServe(*addr, r)
 	if err != nil {
 		log.Fatal("ListenAndServe:", err)
 	}
@@ -58,27 +61,15 @@ func main() {
 }
 
 func mainHandler(w http.ResponseWriter, req *http.Request) {
-	if req.Method != http.MethodGet {
-		http.Error(w, "Invalid request method", http.StatusMethodNotAllowed)
-		return
-	}
 	mainTempl.Execute(w, mainPageData)
 }
 
 func signInHandler(w http.ResponseWriter, req *http.Request) {
-	if req.Method != http.MethodGet {
-		http.Error(w, "Invalid request method", http.StatusMethodNotAllowed)
-		return
-	}
 	signInTempl.Execute(w, signInPageData)
 }
 
 // validates the idToken in the request body and if it is valid it responds with an access token
 func idTokenHandler(w http.ResponseWriter, req *http.Request) {
-	if req.Method != http.MethodPost {
-		http.Error(w, "Invalid request method", http.StatusMethodNotAllowed)
-		return
-	}
 
 	body, err := ioutil.ReadAll(req.Body)
 	defer req.Body.Close()
@@ -118,10 +109,6 @@ func idTokenHandler(w http.ResponseWriter, req *http.Request) {
 
 // example of a protected resource
 func resourceHandler(w http.ResponseWriter, req *http.Request) {
-	if req.Method != http.MethodGet {
-		http.Error(w, "Invalid request method", http.StatusMethodNotAllowed)
-		return
-	}
 
 	resource := resource{"hello from resource"}
 
@@ -181,7 +168,7 @@ func generateAccessToken() (tokenString string, err error) {
 	return
 }
 
-func authorizationMiddleware(next http.Handler) http.Handler {
+func authorizationMiddleware(next http.HandlerFunc) http.HandlerFunc {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		authorizationHeader := r.Header.Get("Authorization")
 
