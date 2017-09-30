@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/rsa"
 	"encoding/json"
 	"errors"
@@ -14,8 +15,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/avoivo/goserver/stateToken"
 	"github.com/dgrijalva/jwt-go"
 	"github.com/gorilla/mux"
+	"golang.org/x/oauth2"
+	"golang.org/x/oauth2/google"
 )
 
 const (
@@ -41,7 +45,18 @@ var signInTempl = template.Must(template.ParseFiles("signin.html"))
 
 var mainPageData mainPage
 var signInPageData signInPage
-var googleSignInClientID string
+var googleSignInClientID, googleSignInClientSecret, googleSignInClientRedirectURI string
+
+var googleOAuth2Config *oauth2.Config
+var stateTokenManager stateToken.Manager
+
+var (
+	signinRoute               = "/signin"
+	idtokenRoute              = "/idtoken"
+	resourceRoute             = "/resource"
+	googleSigninRoute         = "/google_signin"
+	googleSigninCallbackRoute = "/google_signin_callback"
+)
 
 func main() {
 
@@ -49,9 +64,12 @@ func main() {
 
 	r := mux.NewRouter()
 	r.HandleFunc("/", mainHandler).Methods("GET")
-	r.HandleFunc("/signin", signInHandler).Methods("GET")
-	r.HandleFunc("/idtoken", idTokenHandler).Methods("POST")
-	r.HandleFunc("/resource", authorizationMiddleware(resourceHandler)).Methods("GET")
+	r.HandleFunc(signinRoute, signInHandler).Methods("GET")
+	r.HandleFunc(idtokenRoute, idTokenHandler).Methods("POST")
+	r.HandleFunc(resourceRoute, authorizationMiddleware(resourceHandler)).Methods("GET")
+
+	r.HandleFunc(googleSigninRoute, googleSignInHandler).Methods("GET")
+	r.HandleFunc(googleSigninCallbackRoute, googleSignInCallbackHandler).Methods("GET")
 
 	err := http.ListenAndServe(*addr, r)
 	if err != nil {
@@ -120,6 +138,55 @@ func resourceHandler(w http.ResponseWriter, req *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	w.Write(js)
+}
+
+func googleSignInHandler(w http.ResponseWriter, req *http.Request) {
+	token, err := stateTokenManager.Generate()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	url := googleOAuth2Config.AuthCodeURL(token)
+	http.Redirect(w, req, url, http.StatusFound)
+
+}
+
+func googleSignInCallbackHandler(w http.ResponseWriter, req *http.Request) {
+	ctx := context.Background()
+
+	stateToken := req.FormValue("state")
+	log.Printf("State token: %v", stateToken)
+
+	if stateTokenIsValid, err := stateTokenManager.Verify(stateToken); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	} else if !stateTokenIsValid {
+		http.Error(w, err.Error(), http.StatusForbidden)
+		return
+	}
+
+	code := req.FormValue("code")
+	log.Printf("Code: %v", code)
+
+	// Exchange the received code for a token
+	tok, err := googleOAuth2Config.Exchange(ctx, code)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusForbidden)
+		return
+	}
+
+	log.Printf("Token: %v", tok)
+
+	googleAccessToken := tok.AccessToken
+	log.Printf("google access Token: %v", googleAccessToken)
+
+	googleIDToken := tok.Extra("id_token")
+	log.Printf("google id Token: %v", googleIDToken)
+
+	client := googleOAuth2Config.Client(oauth2.NoContext, tok)
+	log.Printf("Client: %v", client)
+
 }
 
 func validateGoogleIDToken(token string) (valid bool, err error) {
@@ -233,6 +300,16 @@ func init() {
 		panic("GOOGLE_SIGN_IN_CLIENT_ID env variable is empty")
 	}
 
+	googleSignInClientSecret = os.Getenv("GOOGLE_SIGN_IN_CLIENT_SECRET")
+	if len(googleSignInClientSecret) == 0 {
+		panic("GOOGLE_SIGN_IN_CLIENT_SECRET env variable is empty")
+	}
+
+	googleSignInClientRedirectURI = os.Getenv("GOOGLE_SIGN_IN_REDIRECT_URI")
+	if len(googleSignInClientRedirectURI) == 0 {
+		panic("GOOGLE_SIGN_IN_REDIRECT_URI env variable is empty")
+	}
+
 	accessTokenPrivateKey := os.Getenv("ACCESS_TOKEN_PRIVATE_KEY")
 	if len(accessTokenPrivateKey) == 0 {
 		panic("ACCESS_TOKEN_PRIVATE_KEY env variable is empty")
@@ -241,6 +318,11 @@ func init() {
 	accessTokenPublicKey := os.Getenv("ACCESS_TOKEN_PUBLIC_KEY")
 	if len(accessTokenPublicKey) == 0 {
 		panic("ACCESS_TOKEN_PUBLIC_KEY env variable is empty")
+	}
+
+	stateTokenSecret := os.Getenv("STATE_TOKEN_SECRET")
+	if len(stateTokenSecret) == 0 {
+		panic("STATE_TOKEN_SECRET env variable is empty")
 	}
 
 	mainPageData = mainPage{commonPage: commonPage{"GoLang server – A general purpose backend server", "Hello from Golang server"}}
@@ -259,6 +341,23 @@ func init() {
 
 	verifyKey, err = jwt.ParseRSAPublicKeyFromPEM(verifyBytes)
 
+	if err != nil {
+		panic(err)
+	}
+
+	googleOAuth2Config = &oauth2.Config{
+		ClientID:     googleSignInClientID,
+		ClientSecret: googleSignInClientSecret,
+		RedirectURL:  googleSignInClientRedirectURI,
+		Endpoint:     google.Endpoint,
+		Scopes: []string{
+			"openid",
+			"email",
+			"profile",
+		},
+	}
+
+	stateTokenManager, err = stateToken.New(stateTokenSecret)
 	if err != nil {
 		panic(err)
 	}

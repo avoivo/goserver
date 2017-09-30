@@ -30,7 +30,7 @@ func (m *manager) Generate() (token string, err error) {
 	if encrypted, e := encrypt(m.key, message); e != nil {
 		err = e
 	} else {
-		token = string(encrypted)
+		token = base64.StdEncoding.EncodeToString(encrypted)
 	}
 	return
 }
@@ -38,10 +38,14 @@ func (m *manager) Generate() (token string, err error) {
 func (m *manager) Verify(token string) (valid bool, err error) {
 	valid = false
 
-	if _, e := decrypt(m.key, []byte(token)); e != nil {
+	if t, e := base64.StdEncoding.DecodeString(token); e != nil {
 		err = e
 	} else {
-		valid = true
+		if _, e := decrypt(m.key, t); e != nil {
+			err = e
+		} else {
+			valid = true
+		}
 	}
 
 	return
@@ -80,6 +84,7 @@ func decrypt(key, text []byte) ([]byte, error) {
 		return nil, err
 	}
 	return data, nil
+
 }
 
 // New instantiates a Manager.
